@@ -1,5 +1,6 @@
 import { redis } from '../index.js';
 import { producer } from '../kafka.js';
+import { correlationActual } from '../observability.js';
 
 // TTL de las salas en Redis. Deslizante: cada broadcast (o sea, cada cambio de estado de una
 // partida activa) lo renueva; una sala terminada o abandonada deja de refrescarse y expira sola
@@ -40,6 +41,7 @@ export async function broadcastState(codigo, salaPreCargada = null) {
       roomId:  codigo,
       event:   'game:state',
       payload,
+      correlationId: correlationActual(),
     })}],
   });
 }
@@ -48,7 +50,7 @@ export async function publish(type, data) {
   await producer.send({
     topic:    'evt.game',
     messages: [{ key: data.codigo, value: JSON.stringify({
-      type, source: 'game', timestamp: Date.now(), data,
+      type, source: 'game', timestamp: Date.now(), version: 1, correlationId: correlationActual(), data,
     })}],
   });
 }
@@ -56,7 +58,7 @@ export async function publish(type, data) {
 export async function broadcastEvent(roomId, event, payload) {
   await producer.send({
     topic:    'gw.broadcast',
-    messages: [{ key: roomId, value: JSON.stringify({ roomId, event, payload }) }],
+    messages: [{ key: roomId, value: JSON.stringify({ roomId, event, payload, correlationId: correlationActual() }) }],
   });
 }
 
@@ -69,7 +71,22 @@ export async function sendOwnFleets(codigo, sala) {
     const board = sala.tableros?.[j.equipo];
     if (!board) continue;
     const cells = Object.values(board.ships ?? {}).flat(); // [[x,y], ...]
-    await broadcastEvent(j.id, 'tu:flota', { cells });
+    // `barcos` (mapa id → celdas) permite al cliente reconstruir las FORMAS y dibujar
+    // los sprites de toda la flota del equipo, no solo celdas sueltas grises.
+    await broadcastEvent(j.id, 'tu:flota', { cells, barcos: board.ships ?? {} });
+  }
+}
+
+// Envía las celdas del tablero de UN equipo a sus miembros humanos. Se usa durante la
+// COLOCACIÓN en 2v2: cuando un jugador confirma su flota, su compañero (que aún está
+// colocando) la ve al instante y no se superpone. El equipo rival nunca la recibe.
+export async function sendTeamFleet(codigo, sala, equipo) {
+  const board = sala.tableros?.[equipo];
+  if (!board) return;
+  const cells = Object.values(board.ships ?? {}).flat();
+  for (const j of sala.jugadores) {
+    if (j.esBot || j.equipo !== equipo) continue;
+    await broadcastEvent(j.id, 'tu:flota', { cells, barcos: board.ships ?? {} });
   }
 }
 
@@ -84,6 +101,7 @@ export async function sendError(roomId, error, extra = {}) {
 function sanitizeState(sala) {
   return {
     codigo:    sala.codigo,
+    nombre:    sala.nombre ?? null, // nombre visible de la sala (el código es la "contraseña")
     modo:      sala.modo ?? null,
     fase:      sala.fase,
     turno:     sala.turno ?? null,

@@ -1,5 +1,5 @@
 import { redis } from '../index.js';
-import { broadcastState } from './helpers.js';
+import { broadcastState, publish } from './helpers.js';
 import { advanceTurn } from './turnFlow.js';
 import { log } from '../logger.js';
 
@@ -14,6 +14,24 @@ export async function handleDisconnect({ codigo, playerId }) {
 
   const esSuTurno = sala.turno?.jugadorActual === playerId;
   if (esSuTurno) {
+    // 2v2: si tiene un compañero conectado, este CUBRE el turno de inmediato (doble
+    // turno del compañero) en vez de pausar la partida 60s esperando la reconexión.
+    const jugador   = sala.jugadores.find((j) => j.id === playerId);
+    const companero = jugador && sala.jugadores.find(
+      (j) => j.equipo === jugador.equipo && j.id !== playerId && (j.esBot || j.conectado !== false),
+    );
+    if (companero) {
+      // El puesto en la rotación sigue siendo del caído (o de quien ya cubría).
+      sala.turno.rotacionId    = sala.turno.rotacionId ?? playerId;
+      sala.turno.jugadorActual = companero.id;
+      sala.turno.pausado       = false;
+      sala.turno.pausadoPor    = null;
+      await redis.set(`sala:${codigo}`, JSON.stringify(sala));
+      await publish('TurnStarted', { codigo, jugadorActual: companero.id }); // el timer reinicia su reloj
+      await broadcastState(codigo, sala);
+      log.info(`sala ${codigo} — ${playerId} desconectado en su turno, lo cubre ${companero.id}`);
+      return;
+    }
     sala.turno.pausado    = true;
     sala.turno.pausadoPor = playerId;
     await redis.set(`sala:${codigo}`, JSON.stringify(sala));

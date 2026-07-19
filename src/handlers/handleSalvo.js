@@ -1,4 +1,5 @@
 import { redis } from '../index.js';
+import { conLockSala } from '../lock.js';
 import { canFireInSalvo, registerShot } from '../domain/salvo.js';
 import { shoot, isShipSunk, markShipSunk } from '../domain/board.js';
 import { isFleetSunk } from '../domain/fleet.js';
@@ -7,7 +8,14 @@ import { teamShieldActive, consumeTeamShield } from '../domain/powers.js';
 import { broadcastState, publish, sendError } from './helpers.js';
 import { log } from '../logger.js';
 
-export async function handleSalvo({ codigo, playerId, x, y }) {
+// En SALVA varios jugadores escriben la MISMA sala casi a la vez: el lock por sala
+// serializa el read-modify-write del blob completo (el lock por celda que ya existía
+// solo protegía la celda, no el JSON entero). Cierra la carrera del hallazgo #2.
+export async function handleSalvo(data) {
+  return conLockSala(redis, data.codigo, () => handleSalvoInner(data));
+}
+
+async function handleSalvoInner({ codigo, playerId, x, y }) {
   const raw = await redis.get(`sala:${codigo}`);
   if (!raw) return;
   const sala = JSON.parse(raw);
@@ -52,7 +60,7 @@ export async function handleSalvo({ codigo, playerId, x, y }) {
 
   const result = shoot(board, x, y);
   if (!result.valid) {
-    await sendError(playerId, 'celda_ya_disparada', { x, y });
+    await sendError(playerId, result.fuera ? 'fuera_de_limites' : 'celda_ya_disparada', { x, y });
     return;
   }
 

@@ -27,8 +27,9 @@ export async function advanceTurn(codigo, sala) {
   }
 
   sala.turno.jugadorActual = resultado.jugadorActual;
-  sala.turno.numeroTurno   = resultado.numeroTurno;
+  sala.turno.rotacionId    = resultado.rotacionId; // dueño del puesto (≠ actual si lo cubre el compañero)
   sala.turno.pausado       = false;
+  sala.turno.numeroTurno   = resultado.numeroTurno;
   // Si esta rotación consumió una Tormenta (saltó un rival), descontarla.
   if (resultado.consumioSalto) sala.turnosASaltar = Math.max(0, (sala.turnosASaltar ?? 0) - 1);
   await redis.set(`sala:${codigo}`, JSON.stringify(sala));

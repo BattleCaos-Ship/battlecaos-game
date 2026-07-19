@@ -1,4 +1,5 @@
 import { redis } from '../index.js';
+import { conLockSala } from '../lock.js';
 import { validateTurn } from '../domain/engine.js';
 import { shoot, isShipSunk, markShipSunk } from '../domain/board.js';
 import { isFleetSunk } from '../domain/fleet.js';
@@ -20,7 +21,14 @@ function pickRandomUnshot(board) {
   return libres.length ? libres[Math.floor(Math.random() * libres.length)] : null;
 }
 
-export async function handleShot({ codigo, playerId, x, y }) {
+// Serializa el read-modify-write de la sala frente a escrituras concurrentes de OTROS
+// procesos (p.ej. la reconexión del gateway). Dentro del game el particionado por sala
+// ya serializa; el lock cubre la carrera entre servicios.
+export async function handleShot(data) {
+  return conLockSala(redis, data.codigo, () => handleShotInner(data));
+}
+
+async function handleShotInner({ codigo, playerId, x, y }) {
   const raw = await redis.get(`sala:${codigo}`);
   if (!raw) return;
   const sala = JSON.parse(raw);
@@ -66,7 +74,7 @@ export async function handleShot({ codigo, playerId, x, y }) {
   const result = shoot(board, x, y);
   if (!result.valid) {
     // El bot ya fue redirigido arriba; para humanos, un clic repetido no gasta el turno.
-    await sendError(playerId, 'celda_ya_disparada', { x, y });
+    await sendError(playerId, result.fuera ? 'fuera_de_limites' : 'celda_ya_disparada', { x, y });
     return;
   }
 

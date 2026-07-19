@@ -31,6 +31,12 @@ export function placeShip(board, ship) {
 }
 
 export function shoot(board, x, y) {
+  // Validar límites del tablero (anti-trampa / anti-basura en el estado): un disparo
+  // fuera de rango no debe crear celdas fantasma que inflen el JSON de la sala en Redis.
+  if (!Number.isInteger(x) || !Number.isInteger(y) ||
+      x < 0 || y < 0 || x >= board.size || y >= board.size) {
+    return { valid: false, fuera: true };
+  }
   const key = `${x},${y}`;
   if (board.cells[key] === 'hit' || board.cells[key] === 'miss' || board.cells[key] === 'sunk')
     return { valid: false };

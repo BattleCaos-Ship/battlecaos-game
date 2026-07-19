@@ -79,6 +79,21 @@ describe('shoot', () => {
     shoot(b, 1, 1);
     expect(shoot(b, 1, 1).valid).toBe(false);
   });
+
+  // SEGURIDAD: coordenadas fuera del tablero se rechazan (no crean celdas fantasma).
+  it('rechaza coordenadas fuera de límites con fuera:true', () => {
+    const b = createBoard(10);
+    expect(shoot(b, 10, 0)).toEqual({ valid: false, fuera: true });
+    expect(shoot(b, -1, 5)).toEqual({ valid: false, fuera: true });
+    expect(shoot(b, 0, 99999)).toEqual({ valid: false, fuera: true });
+    expect(Object.keys(b.cells)).toHaveLength(0); // no se creó ninguna celda basura
+  });
+
+  it('rechaza coordenadas no enteras', () => {
+    const b = createBoard(10);
+    expect(shoot(b, 1.5, 2).valid).toBe(false);
+    expect(shoot(b, 'a', 2).valid).toBe(false);
+  });
 });
 
 describe('isShipSunk', () => {

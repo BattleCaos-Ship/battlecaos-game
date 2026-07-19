@@ -1,10 +1,17 @@
 import { redis } from '../index.js';
+import { conLockSala } from '../lock.js';
 import { createBoard, placeShip, sizeForMode } from '../domain/board.js';
 import { validateFleet } from '../domain/fleet.js';
-import { broadcastState, publish, sendError, sendOwnFleets } from './helpers.js';
+import { broadcastState, publish, sendError, sendOwnFleets, sendTeamFleet } from './helpers.js';
 import { log } from '../logger.js';
 
-export async function handlePlaceShips({ codigo, playerId, ships }) {
+// En 2v2 los dos compañeros confirman flota casi a la vez sobre el MISMO tablero de
+// equipo → lock por sala para que el read-modify-write no se pise.
+export async function handlePlaceShips(data) {
+  return conLockSala(redis, data.codigo, () => handlePlaceShipsInner(data));
+}
+
+async function handlePlaceShipsInner({ codigo, playerId, ships }) {
   const raw = await redis.get(`sala:${codigo}`);
   if (!raw) return;
   const sala = JSON.parse(raw);
@@ -50,6 +57,10 @@ export async function handlePlaceShips({ codigo, playerId, ships }) {
       await publish('PhaseChanged', { codigo, from: 'COLOCACION', to: 'TURNOS' });
       await sendOwnFleets(codigo, sala); // reafirma a cada jugador su flota (robusto ante reconexión)
       log.info(`sala ${codigo} → TURNOS (todos colocaron)`);
+    } else {
+      // 2v2: el compañero que sigue colocando ve YA las celdas ocupadas de este jugador
+      // (tablero de equipo compartido) — sin esto colocaba a ciegas y se superponía.
+      await sendTeamFleet(codigo, sala, equipo);
     }
 
     await broadcastState(codigo);
